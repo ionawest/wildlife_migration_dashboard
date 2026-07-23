@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+    <title>Global Migration Dashboard</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    
+    <style>
+        body, html { margin: 0; padding: 0; height: 100vh; width: 100vw; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; overflow: hidden; background-color: #f8f9fa; }
+        #sidebar { width: 340px; height: 100vh; background: #ffffff; box-shadow: 2px 0 10px rgba(0,0,0,0.1); z-index: 2000; display: flex; flex-direction: column; padding: 20px; box-sizing: border-box; overflow-y: auto; flex-shrink: 0; }
+        h2 { font-size: 20px; color: #2c3e50; margin-top: 0; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        h3 { font-size: 14px; color: #7f8c8d; text-transform: uppercase; margin-top: 20px; margin-bottom: 10px; }
+        .checkbox-row { display: flex; align-items: center; margin-bottom: 8px; font-size: 14px; color: #34495e; cursor: pointer; padding: 4px; border-radius: 4px; transition: background 0.2s; }
+        .checkbox-row:hover { background: #f1f2f6; }
+        .checkbox-row input { margin-right: 10px; cursor: pointer; }
+        .legend-colour { width: 14px; height: 14px; border-radius: 50%; margin-right: 10px; display: inline-block; flex-shrink: 0; }
+        #map-wrapper { width: calc(100vw - 340px); height: 100vh; position: relative; }
+        #map { width: 100%; height: 100%; background: #1a1a1a; z-index: 1; }
+        
+        #slider-container { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 1000; background: rgba(255, 255, 255, 0.95); padding: 15px 30px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); display: flex; flex-direction: column; align-items: center; width: 400px; }
+        .slider-header { display: flex; justify-content: space-between; width: 100%; align-items: center; margin-bottom: 10px; }
+        #month-label { font-size: 22px; font-weight: bold; color: #2c3e50; }
+        #play-btn { background: #2ecc71; color: white; border: none; padding: 6px 15px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 14px; transition: background 0.2s; }
+        #play-btn:hover { background: #27ae60; }
+        #play-btn.playing { background: #e74c3c; }
+        input[type=range] { width: 100%; cursor: pointer; }
+
+        /* Upgraded Vertical CSS Legends */
+        .wms-legend {
+            position: absolute; bottom: 30px; right: 30px; z-index: 1000;
+            background: rgba(255, 255, 255, 0.95); padding: 15px 20px;
+            border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            display: flex; flex-direction: column; align-items: flex-start;
+            width: 110px;
+        }
+        .legend-title { font-size: 13px; font-weight: bold; color: #2c3e50; margin-bottom: 12px; border-bottom: 1px solid #ccc; padding-bottom: 4px; width: 100%; text-align: center; }
+        .legend-scale-container { display: flex; height: 180px; width: 100%; justify-content: center; }
+        
+        .legend-gradient-temp {
+            width: 18px; height: 100%; border-radius: 4px; border: 1px solid #bdc3c7;
+            background: linear-gradient(to top, #000080, #0000FF, #00FFFF, #FFFF00, #FF0000);
+            margin-right: 12px;
+        }
+        .legend-gradient-rain {
+            width: 18px; height: 100%; border-radius: 4px; border: 1px solid #bdc3c7;
+            background: linear-gradient(to top, #ffffff, #87ceeb, #0000ff, #800080);
+            margin-right: 12px;
+        }
+        
+        .legend-labels { display: flex; flex-direction: column; justify-content: space-between; font-size: 11px; color: #34495e; height: 100%; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <h2>Wildlife Analytics</h2>
+        
+        <h3>Environmental Context</h3>
+        <div style="background: #f8f9fa; padding: 10px; border-radius: 6px; border: 1px solid #eee; margin-bottom: 15px;">
+            <label class="checkbox-row"><input type="radio" name="basemap" value="dark" checked> 🌑 Dark Canvas</label>
+            <label class="checkbox-row"><input type="radio" name="basemap" value="temp"> 🌡️ Average Temperature</label>
+            <label class="checkbox-row" style="margin-bottom: 0;"><input type="radio" name="basemap" value="rain"> 🌧️ Average Rainfall</label>
+        </div>
+
+        <h3>Active Layers</h3>
+        <div style="margin-bottom: 15px;">
+            <label class="checkbox-row"><input type="checkbox" id="toggle-habitats" checked> Habitats (KDE)</label>
+            <label class="checkbox-row"><input type="checkbox" id="toggle-points" checked> Sightings</label>
+            <label class="checkbox-row"><input type="checkbox" id="toggle-corridors" checked> Migration Corridors</label>
+        </div>
+
+        <h3>Species & Legend</h3>
+        <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+            <button id="btn-select-all" style="flex: 1; padding: 4px; background: #3498db; color: white; border: none; border-radius: 4px; font-size: 11px; cursor: pointer;">Select All</button>
+            <button id="btn-deselect-all" style="flex: 1; padding: 4px; background: #e74c3c; color: white; border: none; border-radius: 4px; font-size: 11px; cursor: pointer;">Deselect All</button>
+        </div>
+        
+        <div id="species-filter-container" style="flex-grow: 1; overflow-y: auto; margin-bottom: 15px; font-size: 13px;"></div>
+    </div>
+
+    <div id="map-wrapper">
+        <div id="map"></div>
+        
+        <div id="temp-legend" class="wms-legend" style="display:none;">
+            <div class="legend-title">Surface Temp</div>
+            <div class="legend-scale-container">
+                <div class="legend-gradient-temp"></div>
+                <div class="legend-labels">
+                    <span>45°C</span><span>30°C</span><span>15°C</span><span>0°C</span><span>-15°C</span>
+                </div>
+            </div>
+        </div>
+
+        <div id="rain-legend" class="wms-legend" style="display:none;">
+            <div class="legend-title">Rain Rate</div>
+            <div class="legend-scale-container">
+                <div class="legend-gradient-rain"></div>
+                <div class="legend-labels">
+                    <span>Extreme</span><span>Heavy</span><span>Moderate</span><span>Light</span><span>0 mm</span>
+                </div>
+            </div>
+        </div>
+
+        <div id="slider-container">
+            <div class="slider-header">
+                <div id="month-label">January</div>
+                <button id="play-btn">▶ Play</button>
+            </div>
+            <input type="range" id="month-slider" min="1" max="12" value="9" step="1">
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // 1. SILENT IMAGE PRELOADER
+        // ==========================================
+        var preloadedImages = [];
+        for (let i = 1; i <= 12; i++) {
+            let mStr = i < 10 ? '0' + i : i;
+            let imgT = new Image(); imgT.src = `climate_data/temp_${mStr}.png`; preloadedImages.push(imgT);
+            let imgR = new Image(); imgR.src = `climate_data/precip_${mStr}.png`; preloadedImages.push(imgR);
+        }
+
+        // ==========================================
+        // 2. MAP INITIALIZATION & BOUNDARIES
+        // ==========================================
+        var worldBounds = [[-85.051129, -180], [85.051129, 180]];
+        
+        var map = L.map('map', { 
+            preferCanvas: true,
+            minZoom: 2, 
+            maxBounds: worldBounds,
+            maxBoundsViscosity: 1.0 
+        }).setView([-25.0, 135.0], 4);
+        setTimeout(function() { map.invalidateSize(); }, 100);
+
+        // NEW: Drawing State Tracker
+        var isDrawing = false;
+        map.on('draw:drawstart', function() { isDrawing = true; });
+        map.on('draw:drawstop', function() { setTimeout(() => { isDrawing = false; }, 100); });
+
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { 
+            maxZoom: 18, zIndex: 1, noWrap: true 
+        }).addTo(map);
+
+        var tempOverlay = L.imageOverlay("climate_data/temp_01.png", worldBounds, { opacity: 0.65, zIndex: 2 });
+        var rainOverlay = L.imageOverlay("climate_data/precip_01.png", worldBounds, { opacity: 0.65, zIndex: 2 });
+
+        var currentOverlay = null;
+        var masterHabitatData = null, masterPointsData = null, masterCorridorsData = null;
+        var currentHabitatLayer = null, currentPointsLayer = null, currentCorridorsLayer = null;
+        
+        var monthNames = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+        var speciesPalette = ["#00d2ff", "#f39c12", "#2ecc71", "#e74c3c", "#9b59b6", "#1abc9c", "#e67e22", "#3498db"];
+        var speciesColours = {}; 
+
+        function buildSpeciesMenu(speciesList) {
+            var container = document.getElementById('species-filter-container');
+            container.innerHTML = ''; 
+
+            speciesList.forEach((species, index) => {
+                var colour = speciesPalette[index % speciesPalette.length];
+                speciesColours[species.sci] = colour;
+
+                var label = document.createElement('label');
+                label.className = 'checkbox-row';
+                
+                var checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'species-checkbox';
+                checkbox.value = species.sci;
+                checkbox.checked = true; 
+                checkbox.addEventListener('change', updateMap);
+
+                var colourBox = document.createElement('div');
+                colourBox.className = 'legend-colour';
+                colourBox.style.backgroundColor = colour;
+
+                label.appendChild(checkbox);
+                label.appendChild(colourBox);
+                label.appendChild(document.createTextNode(`${species.com} (${species.sci})`));
+                container.appendChild(label);
+            });
+        }
+
+        function updateMap() {
+            var month = parseInt(document.getElementById('month-slider').value);
+            document.getElementById('month-label').innerText = monthNames[month];
+
+            var monthStr = month < 10 ? '0' + month : month;
+            
+            tempOverlay.setUrl(`climate_data/temp_${monthStr}.png`);
+            rainOverlay.setUrl(`climate_data/precip_${monthStr}.png`);
+
+            var selectedBasemap = document.querySelector('input[name="basemap"]:checked').value;
+            var legendTemp = document.getElementById('temp-legend');
+            var legendRain = document.getElementById('rain-legend');
+            
+            if (currentOverlay) { map.removeLayer(currentOverlay); currentOverlay = null; }
+            legendTemp.style.display = "none";
+            legendRain.style.display = "none";
+
+            if (selectedBasemap === 'temp') {
+                currentOverlay = tempOverlay;
+                currentOverlay.addTo(map);
+                legendTemp.style.display = "flex";
+            } else if (selectedBasemap === 'rain') {
+                currentOverlay = rainOverlay;
+                currentOverlay.addTo(map);
+                legendRain.style.display = "flex";
+            }
+
+            var showHabitats = document.getElementById('toggle-habitats').checked;
+            var showPoints = document.getElementById('toggle-points').checked;
+            var showCorridors = document.getElementById('toggle-corridors').checked;
+
+            var activeSpecies = Array.from(document.querySelectorAll('.species-checkbox:checked')).map(cb => cb.value);
+
+            if (currentHabitatLayer) map.removeLayer(currentHabitatLayer);
+            if (currentPointsLayer) map.removeLayer(currentPointsLayer);
+            if (currentCorridorsLayer) map.removeLayer(currentCorridorsLayer);
+
+            if (showHabitats && masterHabitatData && masterHabitatData.features) {
+                var filteredHabitats = masterHabitatData.features.filter(f => f.properties.month === month && activeSpecies.includes(f.properties.species_sci));
+                currentHabitatLayer = L.geoJSON(filteredHabitats, {
+                    style: function(f) { return { fillColor: speciesColours[f.properties.species_sci], color: speciesColours[f.properties.species_sci], weight: 1, opacity: 0.9, fillOpacity: 0.35 }; },
+                    interactive: false 
+                }).addTo(map);
+            }
+
+            if (showCorridors && masterCorridorsData && masterCorridorsData.features) {
+                var filteredCorridors = masterCorridorsData.features.filter(f => activeSpecies.includes(f.properties.species_sci));
+                currentCorridorsLayer = L.geoJSON(filteredCorridors, {
+                    style: function(f) { return { color: speciesColours[f.properties.species_sci], weight: 2, dashArray: '4, 6', opacity: 1 }; },
+                    interactive: false 
+                }).addTo(map);
+            }
+
+            if (showPoints && masterPointsData && masterPointsData.features) {
+                var filteredPoints = masterPointsData.features.filter(f => parseInt(f.properties.month) === month && activeSpecies.includes(f.properties.species_sci));
+                currentPointsLayer = L.geoJSON(filteredPoints, {
+                    pointToLayer: function (f, latlng) { return L.circleMarker(latlng, { radius: 2.5, fillColor: speciesColours[f.properties.species_sci], color: "#ffffff", weight: 0.3, opacity: 1, fillOpacity: 0.9 }); },
+                    interactive: false
+                }).addTo(map);
+            }
+        }
+
+        // ==========================================
+        // 3. DEFENSIVE DATA FETCHING
+        // ==========================================
+        Promise.all([
+            fetch('./master_habitats.geojson').then(r => r.ok ? r.json() : { features: [] }),
+            fetch('./master_points.geojson').then(r => r.ok ? r.json() : { features: [] }),
+            fetch('./master_corridors.geojson').then(r => r.ok ? r.json() : { features: [] })
+        ]).then(data => {
+            masterHabitatData = data[0]; masterPointsData = data[1]; masterCorridorsData = data[2];
+            if (masterPointsData.features.length === 0) return;
+
+            var uniqueSpeciesMap = new Map();
+            masterPointsData.features.forEach(f => uniqueSpeciesMap.set(f.properties.species_sci, f.properties.species_com));
+            
+            var uniqueSpecies = [];
+            uniqueSpeciesMap.forEach((com, sci) => uniqueSpecies.push({sci: sci, com: com}));
+            uniqueSpecies.sort((a, b) => a.com.localeCompare(b.com));
+            
+            buildSpeciesMenu(uniqueSpecies);
+            updateMap(); 
+        });
+
+        // ------------------------------------------
+        // EVENT LISTENERS
+        // ------------------------------------------
+        document.getElementById('month-slider').addEventListener('input', updateMap);
+        document.querySelectorAll('input[name="basemap"]').forEach(radio => radio.addEventListener('change', updateMap));
+        
+        let playInterval = null;
+        const playBtn = document.getElementById('play-btn');
+        playBtn.addEventListener('click', function() {
+            if (playInterval) {
+                clearInterval(playInterval);
+                playInterval = null;
+                playBtn.innerText = "▶ Play";
+                playBtn.classList.remove('playing');
+            } else {
+                playBtn.innerText = "⏸ Pause";
+                playBtn.classList.add('playing');
+                playInterval = setInterval(() => {
+                    let slider = document.getElementById('month-slider');
+                    let val = parseInt(slider.value);
+                    slider.value = (val >= 12) ? 1 : val + 1; 
+                    updateMap(); 
+                }, 800); 
+            }
+        });
+
+        document.getElementById('toggle-habitats').addEventListener('change', updateMap);
+        document.getElementById('toggle-points').addEventListener('change', updateMap);
+        document.getElementById('toggle-corridors').addEventListener('change', updateMap);
+        
+        document.getElementById('btn-select-all').addEventListener('click', function() { document.querySelectorAll('.species-checkbox').forEach(cb => cb.checked = true); updateMap(); });
+        document.getElementById('btn-deselect-all').addEventListener('click', function() { document.querySelectorAll('.species-checkbox').forEach(cb => cb.checked = false); updateMap(); });
+
+        // ==========================================
+        // 4. LEAFLET DRAW & CSV EXPORTER 
+        // ==========================================
+        var drawnItems = new L.FeatureGroup();
+        map.addLayer(drawnItems);
+        
+        var drawControl = new L.Control.Draw({
+            draw: { polyline: false, marker: false, circlemarker: false, circle: false, polygon: { shapeOptions: { color: '#e74c3c' } }, rectangle: { shapeOptions: { color: '#e74c3c' } } },
+            edit: { featureGroup: drawnItems, edit: false } 
+        });
+        map.addControl(drawControl);
+
+        map.on(L.Draw.Event.CREATED, function (event) {
+            var layer = event.layer;
+            drawnItems.clearLayers();
+            drawnItems.addLayer(layer);
+            
+            if (!masterHabitatData) return;
+            
+            var month = parseInt(document.getElementById('month-slider').value);
+            var activeSpecies = Array.from(document.querySelectorAll('.species-checkbox:checked')).map(cb => cb.value);
+            var drawnGeoJSON = layer.toGeoJSON();
+            
+            // We now maintain TWO lists: one for the popup (current month) and one for the master CSV (all months)
+            var foundSpeciesCurrentMonth = [];
+            var foundSpeciesAllMonths = [];
+
+            masterHabitatData.features.forEach(function(hf) {
+                if (activeSpecies.includes(hf.properties.species_sci)) {
+                    // If the bird's habitat touches the drawn box...
+                    if (turf.booleanIntersects(drawnGeoJSON, hf)) {
+                        
+                        // 1. Log it into the "All Months" database
+                        if (!foundSpeciesAllMonths.some(s => s.sci === hf.properties.species_sci && s.month === hf.properties.month)) {
+                            foundSpeciesAllMonths.push({
+                                month: hf.properties.month, sci: hf.properties.species_sci, 
+                                com: hf.properties.species_com, temp: hf.properties.avg_temp_c, rain: hf.properties.avg_rain_mm 
+                            });
+                        }
+                        
+                        // 2. If it happens to be the current month on the slider, log it for the visual popup
+                        if (hf.properties.month === month) {
+                            if (!foundSpeciesCurrentMonth.some(s => s.sci === hf.properties.species_sci)) {
+                                foundSpeciesCurrentMonth.push({ 
+                                    sci: hf.properties.species_sci, com: hf.properties.species_com, 
+                                    temp: hf.properties.avg_temp_c, rain: hf.properties.avg_rain_mm 
+                                });
+                            }
+                        }
+                    }
+                }
+            });
+
+            // Format the visual popup
+            var popupContent = `<div style="font-family: sans-serif; min-width: 280px; max-height: 300px; overflow-y: auto;">`;
+            if (foundSpeciesCurrentMonth.length > 0) {
+                popupContent += `<strong style="color:#2c3e50; font-size:14px;">${foundSpeciesCurrentMonth.length} Species in Region (${monthNames[month]})</strong>`;
+                
+                // Add TWO Export Buttons
+                popupContent += `<br><button id="export-csv-btn" style="margin-top: 8px; margin-bottom: 4px; padding: 6px; background: #34495e; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; width: 100%; font-weight: bold;">📥 Export Data (${monthNames[month]} Only)</button>`;
+                popupContent += `<button id="export-csv-all-btn" style="margin-bottom: 8px; padding: 6px; background: #27ae60; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; width: 100%; font-weight: bold;">📥 Export Data (All 12 Months)</button><hr style="border:0; border-top:1px solid #ccc; margin:8px 0;">`;
+                
+                foundSpeciesCurrentMonth.sort((a, b) => a.com.localeCompare(b.com));
+                
+                foundSpeciesCurrentMonth.forEach(function(species) {
+                    var c = speciesColours[species.sci];
+                    popupContent += `
+                        <div style="margin-bottom: 8px; line-height: 1.3;">
+                            <span style="display:inline-block; width:12px; height:12px; background:${c}; border-radius:50%; margin-right:8px; vertical-align:top; margin-top:2px;"></span>
+                            <span style="display:inline-block; width: calc(100% - 25px);">
+                                <b style="color: #34495e;">${species.com}</b><br>
+                                <span style="font-size:11px; color:#e67e22;">🌡️ ${species.temp !== -99 && species.temp !== undefined ? species.temp + '°C' : 'N/A'}</span> <span style="font-size:11px; color:#bdc3c7;">|</span> 
+                                <span style="font-size:11px; color:#3498db;">🌧️ ${species.rain !== -99 && species.rain !== undefined ? species.rain + 'mm' : 'N/A'}</span>
+                            </span>
+                        </div>`;
+                });
+            } else {
+                popupContent += "<span style='color:#7f8c8d;'>No modeled habitats overlap this region in the current month.</span>";
+                // Still allow them to download the full year, even if this specific month is empty!
+                if (foundSpeciesAllMonths.length > 0) {
+                    popupContent += `<br><br><button id="export-csv-all-btn" style="margin-bottom: 8px; padding: 6px; background: #27ae60; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; width: 100%; font-weight: bold;">📥 Export Data (All 12 Months)</button>`;
+                }
+            }
+            popupContent += `</div>`;
+            layer.bindPopup(popupContent).openPopup();
+
+            // Attach CSV Logic once popup opens
+            setTimeout(() => {
+                // 1. Extract and stringify the polygon's coordinates
+                // We use JSON.stringify to safely format the nested arrays: [[[lon, lat], [lon, lat], ...]]
+                var shapeCoordsStr = JSON.stringify(drawnGeoJSON.geometry.coordinates);
+
+                // Logic for the Current Month Export
+                var btn1 = document.getElementById('export-csv-btn');
+                if (btn1) {
+                    btn1.addEventListener('click', function() {
+                        // Added the new header column
+                        var csvContent = "data:text/csv;charset=utf-8,Month,Common Name,Scientific Name,Avg Temp (C),Avg Rainfall (mm),Survey Polygon Coordinates\n";
+                        
+                        foundSpeciesCurrentMonth.forEach(function(s) {
+                            var t = s.temp !== -99 && s.temp !== undefined ? s.temp : 'N/A';
+                            var r = s.rain !== -99 && s.rain !== undefined ? s.rain : 'N/A';
+                            
+                            // Inject the coordinates string, safely wrapped in double quotes
+                            csvContent += `${monthNames[month]},"${s.com}","${s.sci}",${t},${r},"${shapeCoordsStr}"\n`;
+                        });
+                        var encodedUri = encodeURI(csvContent);
+                        var link = document.createElement("a");
+                        link.setAttribute("href", encodedUri);
+                        link.setAttribute("download", `habitat_survey_${monthNames[month]}.csv`);
+                        document.body.appendChild(link); link.click(); document.body.removeChild(link);
+                    });
+                }
+                
+                // Logic for the All 12 Months Export
+                var btn2 = document.getElementById('export-csv-all-btn');
+                if (btn2) {
+                    btn2.addEventListener('click', function() {
+                        // Added the new header column
+                        var csvContent = "data:text/csv;charset=utf-8,Month,Common Name,Scientific Name,Avg Temp (C),Avg Rainfall (mm),Survey Polygon Coordinates\n";
+                        
+                        // Sort the master list chronologically by month, then alphabetically by bird name
+                        foundSpeciesAllMonths.sort((a, b) => {
+                            if (a.month !== b.month) return a.month - b.month;
+                            return a.com.localeCompare(b.com);
+                        });
+                        
+                        foundSpeciesAllMonths.forEach(function(s) {
+                            var t = s.temp !== -99 && s.temp !== undefined ? s.temp : 'N/A';
+                            var r = s.rain !== -99 && s.rain !== undefined ? s.rain : 'N/A';
+                            
+                            // Inject the coordinates string, safely wrapped in double quotes
+                            csvContent += `${monthNames[s.month]},"${s.com}","${s.sci}",${t},${r},"${shapeCoordsStr}"\n`;
+                        });
+                        
+                        var encodedUri = encodeURI(csvContent);
+                        var link = document.createElement("a");
+                        link.setAttribute("href", encodedUri);
+                        link.setAttribute("download", `habitat_survey_full_year.csv`);
+                        document.body.appendChild(link); link.click(); document.body.removeChild(link);
+                    });
+                }
+            }, 100);
+        });
+
+        // ==========================================
+        // 5. POINT-CLICK SURVEY TOOL
+        // ==========================================
+        map.on('click', function(e) {
+            // NEW: Abort point-and-click if the user is actively drawing a polygon!
+            if (isDrawing) return;
+
+            // Ignore clicks if the draw toolbar is active to prevent double-popups
+            if (Object.keys(drawnItems._layers).length > 0 && e.originalEvent.target.classList.contains('leaflet-interactive')) return;
+
+            if (!masterHabitatData) return;
+            var month = parseInt(document.getElementById('month-slider').value);
+            var activeSpecies = Array.from(document.querySelectorAll('.species-checkbox:checked')).map(cb => cb.value);
+            var clickedPoint = turf.point([e.latlng.lng, e.latlng.lat]);
+            var foundSpecies = [];
+
+            masterHabitatData.features.forEach(function(hf) {
+                if (hf.properties.month === month && activeSpecies.includes(hf.properties.species_sci)) {
+                    if (turf.inside(clickedPoint, hf)) {
+                        if (!foundSpecies.some(s => s.sci === hf.properties.species_sci)) {
+                            foundSpecies.push({ sci: hf.properties.species_sci, com: hf.properties.species_com, temp: hf.properties.avg_temp_c, rain: hf.properties.avg_rain_mm });
+                        }
+                    }
+                }
+            });
+
+            var popupContent = `<div style="font-family: sans-serif; min-width: 260px; max-height: 250px; overflow-y: auto;">`;
+            if (foundSpecies.length > 0) {
+                popupContent += `<strong style="color:#2c3e50;">${foundSpecies.length} Species Present in ${monthNames[month]}</strong><br><hr style="border:0; border-top:1px solid #ccc; margin:8px 0;">`;
+                foundSpecies.sort((a, b) => a.com.localeCompare(b.com));
+                
+                foundSpecies.forEach(function(species) {
+                    var c = speciesColours[species.sci];
+                    popupContent += `
+                        <div style="margin-bottom: 8px; line-height: 1.3;">
+                            <span style="display:inline-block; width:12px; height:12px; background:${c}; border-radius:50%; margin-right:8px; vertical-align:top; margin-top:2px;"></span>
+                            <span style="display:inline-block; width: calc(100% - 25px);">
+                                <b style="color: #34495e;">${species.com}</b><br>
+                                <span style="font-size:11px; color:#e67e22;">🌡️ ${species.temp !== -99 && species.temp !== undefined ? species.temp + '°C' : 'N/A'}</span> <span style="font-size:11px; color:#bdc3c7;">|</span> 
+                                <span style="font-size:11px; color:#3498db;">🌧️ ${species.rain !== -99 && species.rain !== undefined ? species.rain + 'mm' : 'N/A'}</span>
+                            </span>
+                        </div>`;
+                });
+            } else {
+                popupContent += "<span style='color:#7f8c8d;'>No modeled habitats overlap this location.</span>";
+            }
+            popupContent += `</div>`;
+            L.popup().setLatLng(e.latlng).setContent(popupContent).openOn(map);
+        });
+
+    </script>
+</body>
+</html>
