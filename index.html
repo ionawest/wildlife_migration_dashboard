@@ -145,8 +145,11 @@
         map.on('draw:drawstart', function() { isDrawing = true; });
         map.on('draw:drawstop', function() { setTimeout(() => { isDrawing = false; }, 100); });
 
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { 
-            maxZoom: 18, zIndex: 1, noWrap: true 
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', { 
+            maxZoom: 16, 
+            zIndex: 1, 
+            noWrap: true,
+            attribution: '© Esri, HERE, Garmin, © OpenStreetMap contributors'
         }).addTo(map);
 
         var tempOverlay = L.imageOverlay("climate_data/temp_01.png", worldBounds, { opacity: 0.65, zIndex: 2 });
